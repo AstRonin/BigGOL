@@ -39,16 +39,16 @@ neighbors(#cell{row = Row, col = Col, layer = Layer}) ->
     ].
 
 info(String, Args) ->
-    ok = logger:info(String ++ "~n", Args).
+    ok = logger:info(?MODULE_STRING ++ ", " ++ String ++ "~n", Args).
 
 info(String) ->
-    ok = logger:info(String ++ "~n").
+    ok = logger:info(?MODULE_STRING ++ ", " ++ String ++ "~n").
 
 error(String, Args) ->
-    ok = logger:error(String ++ "~n", Args).
+    ok = logger:error(?MODULE_STRING ++ ", " ++ String ++ "~n", Args).
 
 error(String) ->
-    ok = logger:error(String ++ "~n").
+    ok = logger:error(?MODULE_STRING ++ ", " ++ String ++ "~n").
 
 %% get current time in milliseconds
 -spec get_timestamp() -> integer().

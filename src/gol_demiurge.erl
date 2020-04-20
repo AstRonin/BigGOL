@@ -29,7 +29,7 @@
 
 -record(gol_demiurge_state, {
     cellIds = [] :: [atom()],
-    timer :: tref(),
+    timer = undefined :: tref(),
     mode = ?MODE_TIME :: ?MODE_TIME|?MODE_FAST,
     timeline = 1000 :: integer(),
     await_cells_done = 0 :: integer() %% length(cellIds)
@@ -108,6 +108,9 @@ handle_call(clear_cells, From, State) ->
     [gol_cell:clear(Id) || Id <- State#gol_demiurge_state.cellIds],
     gol_utils:info("Clear"),
     {reply, ok, State};
+handle_call(stop, _From, State) ->
+    timer:cancel(State#gol_demiurge_state.timer),
+    {reply, ok, State#gol_demiurge_state{timer = undefined}};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -124,23 +127,25 @@ handle_cast({run, Num}, State) ->
            end,
     #gol_demiurge_state{cellIds = CellIds, mode = Mode, timeline = Timeline} = State,
 
-    call_check_cell(CellIds),
-    State1 = if
-        Mode =:= ?MODE_TIME ->
-            Timer = timer:send_interval(Timeline, state_timeout),
-            State#gol_demiurge_state{timer = Timer};
-        true -> _
-    end,
-
+    State1 = State#gol_demiurge_state{await_cells_done = 0},
 
     gol_utils:info("Run"),
-    {noreply, State1};
+
+    call_check_cell(CellIds),
+
+    State2 = if
+        Mode =:= ?MODE_TIME ->
+            Timer = timer:send_interval(Timeline, state_timeout),
+            State1#gol_demiurge_state{timer = Timer};
+        true -> State1
+    end,
+    {noreply, State2};
 handle_cast(_Request, State = #gol_demiurge_state{}) ->
     {noreply, State}.
 
 call_check_cell(CellIds) ->
     TimeSnapshot = gol_utils:get_timestamp(),
-    [gol_cell:check(Id, TimeSnapshot) || Id <- CellIds].
+    [gol_cell:check_status(Id, TimeSnapshot) || Id <- CellIds].
 
 %% @private
 %% @doc Handling all non call/cast messages

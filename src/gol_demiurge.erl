@@ -16,6 +16,9 @@
 -define(MODE_FAST, mode_fast).
 -define(MODE_TIME, mode_time).
 
+-define(PD_CELL_IDS, cell_ids).
+-define(PD_CELL_COUNT, cell_count).
+
 %% API
 -export([start_link/1]).
 
@@ -28,7 +31,8 @@
 -define(SERVER, ?MODULE).
 
 -record(gol_demiurge_state, {
-    cellIds = [] :: [atom()],
+%%    cellIds = [] :: [atom()],
+    cycle_count = 0 :: non_neg_integer(),
     timer = undefined :: tref(),
     mode = ?MODE_TIME :: ?MODE_TIME|?MODE_FAST,
     timeline = 1000 :: integer(),
@@ -80,14 +84,15 @@ init(CellIds) ->
     [gol_cell:seed(gol_utils:key(Row, Col)) || {Row, Col} <- gol_utils:config(seed)],
     gol_utils:info("Auto Seed: ~p", [gol_utils:config(seed)]),
 
+    put(?PD_CELL_IDS, CellIds),
+    put(?PD_CELL_COUNT, length(CellIds)),
+
     State = #gol_demiurge_state{
-        cellIds = CellIds,
         mode = Mode,
         timeline = Timeline
     },
 
     {ok, State}.
-
 
 
 %% @private
@@ -100,12 +105,12 @@ init(CellIds) ->
 %%    {noreply, NewState :: #gol_demiurge_state{}, timeout() | hibernate} |
 %%    {stop, Reason :: term(), Reply :: term(), NewState :: #gol_demiurge_state{}} |
 %%    {stop, Reason :: term(), NewState :: #gol_demiurge_state{}}).
-handle_call({seed_cells, Seed}, From, State) ->
+handle_call({seed_cells, Seed}, _From, State) ->
     [gol_cell:seed(gol_utils:key(Row, Col)) || {Row, Col} <- Seed],
     gol_utils:info("Seed: ~p", [Seed]),
     {reply, ok, State};
 handle_call(clear_cells, From, State) ->
-    [gol_cell:clear(Id) || Id <- State#gol_demiurge_state.cellIds],
+    [gol_cell:clear(Id) || Id <- get(?PD_CELL_IDS)],
     gol_utils:info("Clear"),
     {reply, ok, State};
 handle_call(stop, _From, State) ->
@@ -123,29 +128,25 @@ handle_call(_Request, _From, State) ->
 handle_cast({run, Num}, State) ->
     Num1 = case Num of
                N when is_integer(N) -> N;
-               _ -> gol_utils:config(count_of_cycle)
+               _ -> gol_utils:config(cycle_count)
            end,
-    #gol_demiurge_state{cellIds = CellIds, mode = Mode, timeline = Timeline} = State,
+    #gol_demiurge_state{mode = Mode, timeline = Timeline} = State,
 
-    State1 = State#gol_demiurge_state{await_cells_done = 0},
+    State1 = State#gol_demiurge_state{cycle_count = Num1},
 
     gol_utils:info("Run"),
 
-    call_check_cell(CellIds),
-
     State2 = if
-        Mode =:= ?MODE_TIME ->
-            Timer = timer:send_interval(Timeline, state_timeout),
-            State1#gol_demiurge_state{timer = Timer};
-        true -> State1
-    end,
+                 Mode =:= ?MODE_TIME -> %% Start by timer
+                     Timer = timer:send_interval(Timeline, state_timeout),
+                     State1#gol_demiurge_state{timer = Timer};
+                 true -> %% Start by can
+                     handle_new_request(State1)
+             end,
     {noreply, State2};
 handle_cast(_Request, State = #gol_demiurge_state{}) ->
     {noreply, State}.
 
-call_check_cell(CellIds) ->
-    TimeSnapshot = gol_utils:get_timestamp(),
-    [gol_cell:check_status(Id, TimeSnapshot) || Id <- CellIds].
 
 %% @private
 %% @doc Handling all non call/cast messages
@@ -153,27 +154,24 @@ call_check_cell(CellIds) ->
 %%    {noreply, NewState :: #gol_demiurge_state{}} |
 %%    {noreply, NewState :: #gol_demiurge_state{}, timeout() | hibernate} |
 %%    {stop, Reason :: term(), NewState :: #gol_demiurge_state{}}).
-handle_info(state_timeout, #gol_demiurge_state{await_cells_done = 0, cellIds = CellIds} = State) ->
-    call_check_cell(CellIds),
-    {noreply, State};
 handle_info(state_timeout, State) ->
-    {noreply, State};
-
-handle_info({done, _Id}, State) ->
-    Count = State#gol_demiurge_state.await_cells_done - 1,
-    Mode = State#gol_demiurge_state.mode,
-    NewCount = if
-        Count =:= 0, Mode =:= ?MODE_FAST -> %% send new tick immediately
-            CellIds = State#gol_demiurge_state.cellIds,
-            call_check_cell(CellIds),
-            length(CellIds);
-        true -> 0
-    end,
-    State1 = State#gol_demiurge_state{await_cells_done = NewCount},
+    State1 = handle_new_request(State),
     {noreply, State1};
+
+handle_info({done, _Id}, #gol_demiurge_state{mode = ?MODE_FAST, await_cells_done = 1} = State) ->
+    State1 = handle_new_request(State),
+    {noreply, State1};
+
+handle_info({done, _Id}, #gol_demiurge_state{await_cells_done = Count} = State) -> %% Just update
+    State1 = State#gol_demiurge_state{await_cells_done = Count - 1},
+    {noreply, State1};
+
+
 handle_info(Info, State) ->
     gol_utils:info("Unexpected Message Info: ~p", [Info]),
     {noreply, State}.
+
+
 
 %% @private
 %% @doc This function is called by a gen_server when it is about to
@@ -196,3 +194,12 @@ code_change(_OldVsn, State = #gol_demiurge_state{}, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+handle_new_request(#gol_demiurge_state{cycle_count = 0} = State) ->
+    gol_utils:info("Finish!"),
+    State#gol_demiurge_state{await_cells_done = 0};
+handle_new_request(#gol_demiurge_state{cycle_count = CycleCount} = State) ->
+
+    [gol_cell:check_status(Id, gol_utils:get_timestamp()) || Id <- get(?PD_CELL_IDS)],
+
+    State#gol_demiurge_state{cycle_count = CycleCount - 1, await_cells_done = get(?PD_CELL_COUNT)}.

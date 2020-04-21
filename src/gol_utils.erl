@@ -39,10 +39,11 @@ neighbors(#cell{row = Row, col = Col, layer = Layer}) ->
     ].
 
 info(String, Args) ->
-    ok = logger:info(?MODULE_STRING ++ ", " ++ String ++ "~n", Args).
+    {registered_name, MyName} = process_info(self(), registered_name),
+    ok = logger:info(?MODULE_STRING ++ ", Cell ~p , " ++ String ++ "~n", [MyName|Args]).
 
 info(String) ->
-    ok = logger:info(?MODULE_STRING ++ ", " ++ String ++ "~n").
+    info(String, []).
 
 error(String, Args) ->
     ok = logger:error(?MODULE_STRING ++ ", " ++ String ++ "~n", Args).

@@ -14,8 +14,8 @@
 %% API
 -compile(export_all).
 
-config(Key) -> config(sgi, Key, "").
-config(Key, Default) -> config(sgi, Key, Default).
+config(Key) -> config(gol, Key, "").
+config(Key, Default) -> config(gol, Key, Default).
 config(App, Key, Default) -> application:get_env(App, Key, Default).
 
 -spec key(#cell{}) -> atom().
@@ -28,28 +28,32 @@ key(Row, Col) ->
 key(Row, Col, Layer) ->
     list_to_atom(lists:concat([Row, ":", Col, ":", Layer])).
 
--spec neighbors(#cell{}) -> list().
-neighbors(#cell{row = Row, col = Col, layer = Layer}) ->
+%% '0:0:0' , Found Nbrs: ['0:1:0','1:0:0','1:1:0']
+-spec neighbors(#cell{}, #field{}) -> list().
+neighbors(#cell{row = Row, col = Col, layer = Layer}, #field{rows = MaxRow, cols = MaxCol}) ->
     Try = [-1, 0, 1],
     [key(#cell{row = Row + NRow, col = Col + NCol, layer = Layer}) ||
         NRow <- Try,
         NCol <- Try,
-        (Row + NRow) > -1,
-        (Col + NCol) > -1
+        (Row + NRow) > -1, % do not -1 upper then first row
+        (Col + NCol) > -1, % do not -1 left the first col
+        (Row + NRow) < MaxRow,
+        (Col + NCol) < MaxCol,
+        not (NRow =:= 0 andalso NCol =:= 0) % do not self
     ].
 
-info(String, Args) ->
+log_info(String) ->
+    log_info(String, []).
+log_info(String, Args) ->
     {registered_name, MyName} = process_info(self(), registered_name),
-    ok = logger:info(?MODULE_STRING ++ ", Cell ~p , " ++ String ++ "~n", [MyName|Args]).
+    ok = logger:info("~p , " ++ String ++ "~n", [MyName|Args]).
 
-info(String) ->
-    info(String, []).
+log_error(String) ->
+    log_error(String, []).
+log_error(String, Args) ->
+    {registered_name, MyName} = process_info(self(), registered_name),
+    ok = logger:error("~p , " ++ String ++ "~n", [MyName|Args]).
 
-error(String, Args) ->
-    ok = logger:error(?MODULE_STRING ++ ", " ++ String ++ "~n", Args).
-
-error(String) ->
-    ok = logger:error(?MODULE_STRING ++ ", " ++ String ++ "~n").
 
 %% get current time in milliseconds
 -spec get_timestamp() -> integer().

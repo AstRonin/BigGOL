@@ -16,6 +16,7 @@
 -define(STATUS_DEAD, dead).
 
 -define(PD_CELL, cell). %% #cell{}
+-define(PD_FIELD, field). %% #field{}
 -define(PD_LIFE_RULE, life_rule). %% @Todo maybe move to the State
 
 %%-define(HANDLE_COMMON,
@@ -24,9 +25,9 @@
 -include("gol.hrl").
 
 %% API
--export([start_link/0]).
+-export([start_link/3]).
 
--export([find_neighbors/1, seed/1, clear/1, check_status/2, ask_status/3]).
+-export([find_neighbors/1, seed/1, clear/1, is_alive/1, current_status/1, check_status/2, ask_status/3]).
 
 %% gen_statem callbacks
 -export([init/1, format_status/2, state_name/3, handle_event/4, terminate/3,
@@ -41,16 +42,17 @@
     nbrs = [] :: list(),
     nbrs_count = 0 :: non_neg_integer(),
     nbrs_answers = #{answer_count => 0, alive_count => 0} :: {non_neg_integer(), non_neg_integer()}, %% {Count of answers, Count of alive}
-    time_snapshot = 0,
-    v = [] :: [{non_neg_integer(), atom()}] %% prepare, alive, dead
+%%    time_snapshot = 0,
+    time_snapshot = {'0', ?STATUS_DEAD} :: {atom(), atom()} %% prepare, alive, dead
+%%    v = [{0, ?STATUS_DEAD}] :: [{non_neg_integer(), atom()}] %% prepare, alive, dead
 }).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-start_link() ->
-    gen_statem:start_link({local, ?SERVER}, ?MODULE, [], []).
+start_link(Name, Cell, Field) ->
+    gen_statem:start_link({local, Name}, ?MODULE, [Cell, Field], []).
 
 -spec find_neighbors(atom()) -> ok.
 find_neighbors(Id) ->
@@ -62,11 +64,18 @@ seed(Id) ->
 clear(Id) ->
     gen_statem:cast(Id, clear).
 
+current_status(Id) ->
+    gen_statem:call(Id, current_status).
+
+-spec is_alive(atom()|pid()) -> boolean().
+is_alive(Id) ->
+    gen_statem:call(Id, is_alive).
+
 check_status(Id, TimeSnapshot) ->
     gen_statem:cast(Id, {check, TimeSnapshot}).
 
 ask_status(From, Id, TimeSnapshot) ->
-    gen_statem:cast(Id, {return_status, TimeSnapshot, From}).
+    gen_statem:cast(Id, {return_nbr_status, TimeSnapshot, From}).
 
 %%%===================================================================
 %%% Events
@@ -76,50 +85,74 @@ ask_status(From, Id, TimeSnapshot) ->
 %%% gen_statem callbacks
 %%%===================================================================
 
-init([Cell]) ->
+init([Cell, Field]) ->
+%%    gol_utils:info("INIT ~p, ~p", [Cell, Field]),
     put(?PD_CELL, Cell),
+    put(?PD_FIELD, Field),
     put(?PD_LIFE_RULE, gol_utils:config(life_rule)),
-    gol_utils:info("INIT"),
-    {ok, ?STATUS_PREPARE, #gol_cell_state{}}.
+    {ok, ?STATUS_DEAD, #gol_cell_state{}}.
+%%    {ok, ?STATUS_PREPARE, #gol_cell_state{}}.
+
+handle_event({call, From}, current_status, StateName, _State) ->
+    {keep_state_and_data, [{reply, From, StateName}]};
+
+handle_event({call, From}, is_alive, StateName, _State) ->
+    {keep_state_and_data, [{reply, From, StateName =:= ?STATUS_ALIVE}]};
 
 
 handle_event(cast, find_neighbors, _StateName, State) ->
-    Nbrs = gol_utils:neighbors(get(?PD_CELL)),
-    gol_utils:info("Found Nbrs: ~p", [Nbrs]),
+    Nbrs = gol_utils:neighbors(get(?PD_CELL), get(?PD_FIELD)),
+%%    gol_utils:info("Found Nbrs: ~p", [Nbrs]),
     {keep_state, State#gol_cell_state{nbrs = Nbrs, nbrs_count = length(Nbrs)}};
 
-handle_event(cast, {life_rule, R}, _StateName, State) ->
+handle_event(cast, {life_rule, R}, _StateName, _State) ->
     put(?PD_LIFE_RULE, R),
     keep_state_and_data;
 
 handle_event(cast, seed, _StateName, State) ->
-    gol_utils:info("Seed as Alive"),
-    {next_state, ?STATUS_ALIVE, State};
+    gol_utils:log_info("Seed as Alive"),
+    {next_state, ?STATUS_ALIVE, State#gol_cell_state{time_snapshot = {'0', ?STATUS_ALIVE}}};
 
 handle_event(cast, clear, _StateName, State) ->
-    {next_state, ?STATUS_DEAD, State};
+    gol_utils:log_info("Cleared"),
+    {next_state, ?STATUS_DEAD, State#gol_cell_state{time_snapshot = {'0', ?STATUS_DEAD}}};
 
-handle_event(cast, {check, TimeSnapshot}, _StateName, State) ->
-    gol_utils:info("start new check with TimeSnapshot: ~p", [TimeSnapshot]),
+handle_event(cast, {check, TimeSnapshot}, StateName, State) ->
+%%    gol_utils:info("start new check with TimeSnapshot: ~p", [TimeSnapshot]),
 
     [gol_cell:ask_status(self(), N, TimeSnapshot) || N <- State#gol_cell_state.nbrs],
 
-    State1 = State#gol_cell_state{nbrs_answers = #{answer_count => 0, alive_count => 0}},
+    State1 = State#gol_cell_state{
+        nbrs_answers = #{answer_count => 0, alive_count => 0},
+        time_snapshot = {TimeSnapshot, StateName}
+    },
     {keep_state, State1};
 
-handle_event(cast, {return_status, TimeSnapshot, From}, StateName, State) -> %% Do return status
+handle_event(cast, {return_nbr_status, TimeSnapshot, From}, StateName, State) -> %% Do return status
+
     %% Search in the history of versions, If not found retrun current status
-    PrevState = proplists:get_value(TimeSnapshot, State#gol_cell_state.v, StateName),
-    gol_utils:info("My Current State: ~p", [PrevState]),
-    From ! {status_of_nbr, PrevState, TimeSnapshot},
+%%    CurrentStatus = proplists:get_value(TimeSnapshot, State#gol_cell_state.snapshot, StateName),
+
+    SavedTimeSnapshot = State#gol_cell_state.time_snapshot,
+
+    CurrentStatus = case SavedTimeSnapshot of
+                        {TimeSnapshot, SavedStateName} -> SavedStateName;
+                        _ -> StateName
+                    end,
+
+%%    gol_utils:info("My Current State: ~p", [PrevState]),
+
+    From ! {status_of_nbr, CurrentStatus},
     keep_state_and_data;
 
-handle_event(info, {status_of_nbr, StatusNbr, TimeSnapshot}, StateName, State) -> %% receive nbr status
+%%handle_event(info, {status_of_nbr, _StatusOfNbr, TimeSnapshot}, _StateName, #gol_cell_state{time_snapshot = TimeSnapshot}) ->
+%%    gol_utils:log_error("TimeSnapshot ~p is not correct, please be slow!", [TimeSnapshot]),
+%%    keep_state_and_data;
+handle_event(info, {status_of_nbr, StatusNbr}, StateName, State) -> %% receive nbr status
     #gol_cell_state{
-        nbrs_answers = #{answer_count := AnswerCount, alive_count => AliveCount},
-        nbrs_count = NbrsCount,
-        v = V,
-        time_snapshot = CurrentTimeSnapshot
+        nbrs_answers = #{answer_count := AnswerCount, alive_count := AliveCount},
+        nbrs_count = NbrsCount
+%%        time_snapshot = CurrentTimeSnapshot
     } = State,
 
     AnswerCount1 = AnswerCount + 1,
@@ -130,29 +163,25 @@ handle_event(info, {status_of_nbr, StatusNbr, TimeSnapshot}, StateName, State) -
 
             NewStateName = fate(StateName, Sum),
 
-            gol_utils:info("New state: ~p, NbrCount: ~p, AliveCount: ~p", [NewStateName, AnswerCount1, AliveCount]),
+%%            gol_utils:info("New state: ~p, NbrCount: ~p, AliveCount: ~p", [NewStateName, AnswerCount1, AliveCount]),
 
-            [H|_T] = V, %% Save only last state from history, about memory
+%%            [H | _T] = V, %% Save only last state from history, about memory
             State1 = State#gol_cell_state{
-                nbrs_answers = #{answer_count := 0, alive_count => 0},
-                v = [{CurrentTimeSnapshot, NewStateName} | [H]]
+                nbrs_answers = #{answer_count => 0, alive_count => 0}
             },
 
             {registered_name, MyName} = process_info(self(), registered_name),
             gol_demiurge ! {done, MyName},
-            {next_status, NewStateName, State1};
+            {next_state, NewStateName, State1};
         true ->
             State1 = State#gol_cell_state{
-                nbrs_answers = #{answer_count := AnswerCount1, alive_count => Sum}
+                nbrs_answers = #{answer_count => AnswerCount1, alive_count => Sum}
             },
             {keep_state, State1}
     end;
-handle_event(info, {status_of_nbr, _StatusOfNbr, TimeSnapshot}, _StateName, #gol_cell_state{time_snapshot = TimeSnapshot}) ->
-    gol_utils:error("TimeSnapshot ~p is not correct, please be slow!", [TimeSnapshot]),
-    keep_state_and_data;
 
 handle_event(_EventType, EventContent, _StateName, _State) ->
-    gol_utils:info("Unsupported EventContent: ~p", [EventContent]),
+    gol_utils:log_info("Unsupported EventContent: ~p", [EventContent]),
     keep_state_and_data.
 
 
@@ -179,7 +208,6 @@ status_to_int(?STATUS_DEAD) ->
     0;
 status_to_int(_) ->
     0.
-
 
 
 %%%===================================================================

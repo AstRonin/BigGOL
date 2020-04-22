@@ -13,7 +13,7 @@
 
 -include("gol.hrl").
 
--export([run/0, run/1, seed/1, clear/0]).
+-export([run/0, run/1, wait/0, seed/1, clear/0, get_alive/0]).
 
 %% Application callbacks
 -export([start/2, stop/1]).
@@ -25,11 +25,17 @@ run() ->
 run(Num) ->
     gol_demiurge:run(Num).
 
+wait() ->
+    gol_demiurge:wait().
+
 seed(Seed) ->
     gol_demiurge:seed_cells(Seed).
 
 clear() ->
     gol_demiurge:clear_cells().
+
+get_alive() ->
+    gol_demiurge:get_alive().
 
 
 

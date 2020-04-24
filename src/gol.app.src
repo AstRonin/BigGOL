@@ -1,7 +1,7 @@
 {application, gol,
     [{description, "Game of (true) life"},
         {vsn, "0.1.0"},
-        {registered, [gol_cell, gol_demiurge, gol_sup]},
+        {registered, [gol_gui, gol_cell, gol_demiurge, gol_sup]},
         {mod, {gol, []}},
         {applications,
             [kernel, stdlib, sasl, os_mon

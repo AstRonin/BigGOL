@@ -8,6 +8,8 @@
 %%%-------------------------------------------------------------------
 -author("Roman Shuplov").
 
+-include_lib("wx/include/wx.hrl").
+
 -record(field, {
     rows = 0 :: non_neg_integer(),
     cols = 0 :: non_neg_integer(),

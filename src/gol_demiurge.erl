@@ -69,6 +69,14 @@ run(Num) ->
 wait() ->
     gen_server:call(?SERVER, wait).
 
+
+start_gui() ->
+    spawn_link(fun() -> init_gui() end).
+
+init_gui() ->
+    gol_gui:new(self()),
+    receive {gfx, GFX} -> ok end.
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -79,20 +87,23 @@ wait() ->
 %%    {ok, State :: #gol_demiurge_state{}} | {ok, State :: #gol_demiurge_state{}, timeout() | hibernate} |
 %%    {stop, Reason :: term()} | ignore).
 init(CellIds) ->
+
     Timeline = gol_utils:config(timeline),
     Mode = case Timeline of
                T when T > 0 -> ?MODE_TIME;
                _T -> ?MODE_FAST
            end,
 
-    [gol_cell:find_neighbors(Id) || Id <- CellIds],
-    gol_utils:log_info("Find neighbors: ~p", [CellIds]),
-
-    [gol_cell:seed(gol_utils:key(Row, Col)) || {Row, Col} <- gol_utils:config(seed)],
-    gol_utils:log_info("Auto Seed: ~p", [gol_utils:config(seed)]),
+%%    [gol_cell:find_neighbors(Id) || Id <- CellIds],
+%%    gol_utils:log_info("Find neighbors: ~p", [CellIds]),
+%%
+%%    [gol_cell:seed(gol_utils:key(Row, Col)) || {Row, Col} <- gol_utils:config(seed)],
+%%    gol_utils:log_info("Auto Seed: ~p", [gol_utils:config(seed)]),
 
     put(?PD_CELL_IDS, CellIds),
     put(?PD_CELL_COUNT, length(CellIds)),
+
+    start_gui(),
 
     State = #gol_demiurge_state{
         mode = Mode,

@@ -12,8 +12,6 @@
 -behaviour(gen_statem).
 
 -define(STATUS_PREPARE, prepare).
--define(STATUS_ALIVE, alive).
--define(STATUS_DEAD, dead).
 
 -define(PD_CELL, cell). %% #cell{}
 -define(PD_FIELD, field). %% #field{}
@@ -25,7 +23,7 @@
 -include("gol.hrl").
 
 %% API
--export([start_link/3]).
+-export([start_link/3, start/3]).
 
 -export([find_neighbors/1, seed/1, clear/1, is_alive/1, current_status/1, check_status/2, ask_status/3]).
 
@@ -39,12 +37,10 @@
 -record(gol_cell_state, {
 %%    state = 0 :: integer(), %% 1 | 0, @todo maybe add -1|0|1 or 0|1|2
 %%    cell = #cell{} :: any(),
-    nbrs = [] :: list(),
+    nbrs = [] :: [atom()],
     nbrs_count = 0 :: non_neg_integer(),
-    nbrs_answers = #{answer_count => 0, alive_count => 0} :: {non_neg_integer(), non_neg_integer()}, %% {Count of answers, Count of alive}
-%%    time_snapshot = 0,
-    time_snapshot = {'0', ?STATUS_DEAD} :: {atom(), atom()} %% prepare, alive, dead
-%%    v = [{0, ?STATUS_DEAD}] :: [{non_neg_integer(), atom()}] %% prepare, alive, dead
+    nbrs_answers = #{answer_count => 0, alive_count => 0} :: #{answer_count => non_neg_integer(), alive_count => non_neg_integer()}, %% {Count of answers, Count of alive}
+    time_snapshot = undefined :: {atom(), atom()} | undefined %% prepare, alive, dead
 }).
 
 %%%===================================================================
@@ -53,6 +49,9 @@
 
 start_link(Name, Cell, Field) ->
     gen_statem:start_link({local, Name}, ?MODULE, [Cell, Field], []).
+
+start(Name, Cell, Field) ->
+    gen_statem:start({local, Name}, ?MODULE, [Cell, Field], []).
 
 -spec find_neighbors(atom()) -> ok.
 find_neighbors(Id) ->
@@ -111,11 +110,11 @@ handle_event(cast, {life_rule, R}, _StateName, _State) ->
 
 handle_event(cast, seed, _StateName, State) ->
     gol_utils:log_info("Seed as Alive"),
-    {next_state, ?STATUS_ALIVE, State#gol_cell_state{time_snapshot = {'0', ?STATUS_ALIVE}}};
+    {next_state, ?STATUS_ALIVE, State#gol_cell_state{time_snapshot = undefined}};
 
 handle_event(cast, clear, _StateName, State) ->
     gol_utils:log_info("Cleared"),
-    {next_state, ?STATUS_DEAD, State#gol_cell_state{time_snapshot = {'0', ?STATUS_DEAD}}};
+    {next_state, ?STATUS_DEAD, State#gol_cell_state{time_snapshot = undefined}};
 
 handle_event(cast, {check, TimeSnapshot}, StateName, State) ->
 %%    gol_utils:info("start new check with TimeSnapshot: ~p", [TimeSnapshot]),
@@ -130,29 +129,20 @@ handle_event(cast, {check, TimeSnapshot}, StateName, State) ->
 
 handle_event(cast, {return_nbr_status, TimeSnapshot, From}, StateName, State) -> %% Do return status
 
-    %% Search in the history of versions, If not found retrun current status
-%%    CurrentStatus = proplists:get_value(TimeSnapshot, State#gol_cell_state.snapshot, StateName),
-
-    SavedTimeSnapshot = State#gol_cell_state.time_snapshot,
-
-    CurrentStatus = case SavedTimeSnapshot of
-                        {TimeSnapshot, SavedStateName} -> SavedStateName;
-                        _ -> StateName
-                    end,
-
-%%    gol_utils:info("My Current State: ~p", [PrevState]),
+    CurrentStatus =
+        case State#gol_cell_state.time_snapshot of
+            undefined -> StateName;
+            {TimeSnapshot, SavedStateName} -> SavedStateName;
+            _ -> StateName %% for safe
+        end,
 
     From ! {status_of_nbr, CurrentStatus},
     keep_state_and_data;
 
-%%handle_event(info, {status_of_nbr, _StatusOfNbr, TimeSnapshot}, _StateName, #gol_cell_state{time_snapshot = TimeSnapshot}) ->
-%%    gol_utils:log_error("TimeSnapshot ~p is not correct, please be slow!", [TimeSnapshot]),
-%%    keep_state_and_data;
 handle_event(info, {status_of_nbr, StatusNbr}, StateName, State) -> %% receive nbr status
     #gol_cell_state{
         nbrs_answers = #{answer_count := AnswerCount, alive_count := AliveCount},
         nbrs_count = NbrsCount
-%%        time_snapshot = CurrentTimeSnapshot
     } = State,
 
     AnswerCount1 = AnswerCount + 1,
@@ -163,15 +153,12 @@ handle_event(info, {status_of_nbr, StatusNbr}, StateName, State) -> %% receive n
 
             NewStateName = fate(StateName, Sum),
 
-%%            gol_utils:info("New state: ~p, NbrCount: ~p, AliveCount: ~p", [NewStateName, AnswerCount1, AliveCount]),
-
-%%            [H | _T] = V, %% Save only last state from history, about memory
             State1 = State#gol_cell_state{
                 nbrs_answers = #{answer_count => 0, alive_count => 0}
             },
 
             {registered_name, MyName} = process_info(self(), registered_name),
-            gol_demiurge ! {done, MyName},
+            gol_demiurge ! {done, MyName, NewStateName},
             {next_state, NewStateName, State1};
         true ->
             State1 = State#gol_cell_state{

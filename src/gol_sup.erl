@@ -43,8 +43,10 @@ init([]) ->
 
     CellIds = [Id || #{id := Id} <- ChildSpecs],
 
+    CellIds1 = gb_sets:from_list(CellIds),
+
     ChildSpecs1 = ChildSpecs ++ [
-        #{id => gol_demiurge, start => {gol_demiurge, start_link, [CellIds]}}
+        #{id => gol_demiurge, start => {gol_demiurge, start_link, [CellIds1]}}
     ],
 
 %%    gol_utils:log_info("Supervisor start with child: ~p", [ChildSpecs1]),

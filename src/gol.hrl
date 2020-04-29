@@ -10,6 +10,9 @@
 
 -include_lib("wx/include/wx.hrl").
 
+-define(STATUS_ALIVE, alive).
+-define(STATUS_DEAD, dead).
+
 -record(field, {
     rows = 0 :: non_neg_integer(),
     cols = 0 :: non_neg_integer(),

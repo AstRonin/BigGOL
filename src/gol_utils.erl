@@ -37,26 +37,35 @@ neighbors(#cell{row = Row, col = Col, layer = Layer}, #field{rows = MaxRow, cols
         NCol <- Try,
         (Row + NRow) > -1, % do not -1 upper then first row
         (Col + NCol) > -1, % do not -1 left the first col
-        (Row + NRow) < MaxRow,
-        (Col + NCol) < MaxCol,
+        (Row + NRow) < MaxRow, % do not more than row
+        (Col + NCol) < MaxCol, % do not more than col
         not (NRow =:= 0 andalso NCol =:= 0) % do not self
     ].
 
 log_info(String) ->
     log_info(String, []).
 log_info(String, Args) ->
-    {registered_name, MyName} = process_info(self(), registered_name),
-    ok = logger:info("~p , " ++ String ++ "~n", [MyName|Args]).
+    ok = logger:info("~p , " ++ String ++ "~n", [proc_name() | Args]).
+
+log_warning(String) ->
+    log_warning(String, []).
+log_warning(String, Args) ->
+    ok = logger:warning("~p , " ++ String ++ "~n", [proc_name() | Args]).
 
 log_error(String) ->
     log_error(String, []).
 log_error(String, Args) ->
-    {registered_name, MyName} = process_info(self(), registered_name),
-    ok = logger:error("~p , " ++ String ++ "~n", [MyName|Args]).
+    ok = logger:error("~p , " ++ String ++ "~n", [proc_name() | Args]).
 
+
+proc_name() ->
+    case process_info(self(), registered_name) of
+        {registered_name, N} -> N;
+        _ -> self()
+    end.
 
 %% get current time in milliseconds
 -spec get_timestamp() -> integer().
 get_timestamp() ->
     {Mega, Sec, Micro} = os:timestamp(),
-    (Mega*1000000 + Sec)*1000 + round(Micro/1000).
+    (Mega * 1000000 + Sec) * 1000 + round(Micro / 1000).

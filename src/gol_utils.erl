@@ -28,6 +28,12 @@ key(Row, Col) ->
 key(Row, Col, Layer) ->
     list_to_atom(lists:concat([Row, ":", Col, ":", Layer])).
 
+unkey(Name) ->
+    case string:split(atom_to_list(Name), ":", all) of
+        [Rs, Cs, Ls] -> {list_to_integer(Rs), list_to_integer(Cs), list_to_integer(Ls)};
+        _ -> {0, 0, 0}
+    end.
+
 %% '0:0:0' , Found Nbrs: ['0:1:0','1:0:0','1:1:0']
 -spec neighbors(#cell{}, #field{}) -> list().
 neighbors(#cell{row = Row, col = Col, layer = Layer}, #field{rows = MaxRow, cols = MaxCol}) ->

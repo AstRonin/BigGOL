@@ -83,6 +83,8 @@ wait() ->
 %%    {stop, Reason :: term()} | ignore).
 init(CellIds) ->
 
+    process_flag(message_queue_data, off_heap),
+
     Timeline = gol_utils:config(timeline),
     Mode = case Timeline of
                T when T > 0 -> ?MODE_TIME;
@@ -91,11 +93,14 @@ init(CellIds) ->
 
 %%    [gol_cell:find_neighbors(Id) || Id <- CellIds],
 %%    gol_utils:log_info("Find neighbors: ~p", [CellIds]),
-    find_neighbors_iterator(gb_sets:iterator(CellIds)),
+%%    find_neighbors_iterator(gb_sets:iterator(CellIds)),
+    Iter = gb_sets:iterator(CellIds),
+    spawn(fun() -> find_neighbors_iterator(Iter) end),
 
     AliveCellsTuple = gol_utils:config(seed),
 
     [gol_cell:seed(gol_utils:key(Row, Col)) || {Row, Col} <- AliveCellsTuple],
+
     gol_utils:log_info("Auto Seed: ~p", [gol_utils:config(seed)]),
 
     put(?PD_CELL_IDS, CellIds),
@@ -112,18 +117,9 @@ init(CellIds) ->
         gfx = GFX
     },
 
-    send_alive_cells_to_gui(State, [gol_utils:key(Row, Col) || {Row, Col} <- AliveCellsTuple]),
+    send_alive_cells_to_gui(State, [{Row, Col, 0} || {Row, Col} <- AliveCellsTuple]),
 
     {ok, State}.
-
-find_neighbors_iterator(Iter) ->
-    case gb_sets:next(Iter) of
-        {Id, Iter2} ->
-            gol_cell:find_neighbors(Id),
-            find_neighbors_iterator(Iter2);
-        none -> ok
-    end.
-
 
 
 %% @private
@@ -138,11 +134,14 @@ find_neighbors_iterator(Iter) ->
 %%    {stop, Reason :: term(), NewState :: #gol_demiurge_state{}}).
 handle_call({seed_cells, Seed}, _From, State) ->
     [gol_cell:seed(gol_utils:key(Row, Col)) || {Row, Col} <- Seed],
+    send_alive_cells_to_gui(State, [{Row, Col, 0} || {Row, Col} <- Seed]),
     gol_utils:log_info("Seed: ~p", [Seed]),
     {reply, ok, State};
 
 handle_call(clear_cells, _From, State) ->
-    [gol_cell:clear(Id) || Id <- get(?PD_CELL_IDS)],
+%%    [gol_cell:clear(Id) || Id <- get(?PD_CELL_IDS)],
+    Iter = gb_sets:iterator(get(?PD_CELL_IDS)),
+    spawn(fun() -> clear_cells_iterator(Iter) end),
     gol_utils:log_info("Clear"),
     {reply, ok, State};
 
@@ -218,7 +217,7 @@ handle_info({done, Id, CellStateName}, #gol_demiurge_state{
         if
             Count =:= 1 ->
                 State1 = State#gol_demiurge_state{alive_cells = []},
-                send_alive_cells_to_gui(State1, AliveCells1),
+                send_alive_cells_to_gui(State1, [gol_utils:unkey(N) || N <- AliveCells1]),
                 State1;
             true ->
                 State#gol_demiurge_state{await_cells_done = Count - 1, alive_cells = AliveCells1}
@@ -263,8 +262,8 @@ code_change(_OldVsn, State = #gol_demiurge_state{}, _Extra) ->
 start_gui() ->
     gol_gui:new().
 
+-spec send_alive_cells_to_gui(#gol_demiurge_state{}, [{non_neg_integer(), non_neg_integer(), non_neg_integer()}]) -> ok.
 send_alive_cells_to_gui(State, AliveCells) ->
-
     case State#gol_demiurge_state.gfx of
         undefined -> ok;
         GFX -> gol_gui:set_alive(GFX, AliveCells)
@@ -296,12 +295,23 @@ handle_new_request(#gol_demiurge_state{cycle_count = CycleCount} = State) ->
 %%    gol_utils:log_info("Next Cycle: ~p, TimeSnapshot: ~p", [CycleCount, TimeSnapshot]),
 
 %%    [gol_cell:check_status(Id, TimeSnapshot) || Id <- get(?PD_CELL_IDS)],
-    check_status_iterator(gb_sets:iterator(get(?PD_CELL_IDS)), TimeSnapshot),
+%%    check_status_iterator(gb_sets:iterator(get(?PD_CELL_IDS)), TimeSnapshot),
+    Iter = gb_sets:iterator(get(?PD_CELL_IDS)),
+    spawn(fun() -> check_status_iterator(Iter, TimeSnapshot) end),
 
     State#gol_demiurge_state{
         cycle_count = CycleCount - 1,
         await_cells_done = get(?PD_CELL_COUNT)
     }.
+
+find_neighbors_iterator(Iter) ->
+    process_flag(message_queue_data, off_heap),
+    case gb_sets:next(Iter) of
+        {Id, Iter2} ->
+            gol_cell:find_neighbors(Id),
+            find_neighbors_iterator(Iter2);
+        none -> ok
+    end.
 
 check_status_iterator(Iter, TimeSnapshot) ->
     case gb_sets:next(Iter) of
@@ -311,19 +321,6 @@ check_status_iterator(Iter, TimeSnapshot) ->
         none -> ok
     end.
 
-
-find_cell_alive() ->
-    [Id ||
-        {Id, IsAlive} <- find_cell_alive_iterator(gb_sets:iterator(get(?PD_CELL_IDS)), []),
-        IsAlive =:= true
-    ]
-
-%%    [Id ||
-%%        {Id, IsAlive} <- [{Id, gol_cell:is_alive(Id)} || Id <- get(?PD_CELL_IDS)],
-%%        IsAlive =:= true
-%%    ]
-.
-
 find_cell_alive_iterator(Iter, Acc) ->
     case gb_sets:next(Iter) of
         {Id, Iter2} ->
@@ -331,6 +328,27 @@ find_cell_alive_iterator(Iter, Acc) ->
             find_cell_alive_iterator(Iter2, Acc1);
         none -> Acc
     end.
+
+clear_cells_iterator(Iter) ->
+    case gb_sets:next(Iter) of
+        {Id, Iter2} ->
+            gol_cell:clear(Id),
+            clear_cells_iterator(Iter2);
+        none -> ok
+    end.
+
+
+find_cell_alive() ->
+    Iter = gb_sets:iterator(get(?PD_CELL_IDS)),
+    [Id ||
+        {Id, IsAlive} <- find_cell_alive_iterator(Iter, []),
+        IsAlive =:= true
+    ]
+.
+
+
+
+
 
 -spec stop_timer(#gol_demiurge_state{}) -> #gol_demiurge_state{}.
 stop_timer(State) ->

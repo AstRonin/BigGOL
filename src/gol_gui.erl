@@ -36,6 +36,7 @@ new() ->
     wx:new(),
     wx_object:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec set_alive(atom(), [{non_neg_integer(), non_neg_integer(), non_neg_integer()}]) -> ok.
 set_alive(Id, AliveCells) ->
     wx_object:cast(Id, {set_alive, AliveCells}).
 
@@ -192,13 +193,13 @@ draw_row(Row, Col, Layer, DC, S) ->
     draw_cell(#cell{row = Row, col = Col, layer = Layer}, DC, S),
     draw_row(Row, Col - 1, Layer, DC, S).
 
-draw_cell(#cell{row = Row, col = Col}, DC, #gol_gui_state{pen = Pen, win = Win, alive_cells = AliveCells}) ->
+draw_cell(#cell{row = Row, col = Col, layer = Layer}, DC, #gol_gui_state{pen = Pen, win = Win, alive_cells = AliveCells}) ->
 
 %%    gol_utils:log_info("draw_cell ~p", [AliveCells]),
 
-    CellName = gol_utils:key(Row, Col),
+%%    CellName = gol_utils:key(Row, Col),
 
-    case lists:member(CellName, AliveCells) of
+    case lists:member({Row, Col, Layer}, AliveCells) of
         true ->
 %%            {W0, H0} = wxWindow:getSize(Win),
 %%            BoxSz = getGeomSz(W0, H0),

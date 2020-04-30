@@ -85,6 +85,9 @@ ask_status(From, Id, TimeSnapshot) ->
 %%%===================================================================
 
 init([Cell, Field]) ->
+
+    process_flag(message_queue_data, off_heap),
+
 %%    gol_utils:info("INIT ~p, ~p", [Cell, Field]),
     put(?PD_CELL, Cell),
     put(?PD_FIELD, Field),
